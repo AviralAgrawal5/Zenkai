@@ -5,7 +5,7 @@ import uuid
 from typing import List
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,10 +23,12 @@ FINANCE_SERVICE_URL = os.environ.get("FINANCE_SERVICE_URL", "http://finance:8001
 @router.post("/enroll", response_model=EnrollResponse, status_code=201)
 async def enroll_student(
     body: EnrollRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> EnrollResponse:
     """Enroll a student: verifies fee clearance with Finance, then creates enrollment record."""
-    workflow_id = str(uuid.uuid4())
+    # Propagate workflow_id from caller or generate a new one
+    workflow_id = request.headers.get("X-Workflow-ID", str(uuid.uuid4()))
     event_id = str(uuid.uuid4())
 
     logger.info(
@@ -41,13 +43,39 @@ async def enroll_student(
         },
     )
 
-    # ── Step 1: Verify fee clearance ─────────────────────────────────────────
+    # ── Step 1: Check for existing enrollment (idempotency) ──────────────────
+    existing_result = await db.execute(
+        select(Enrollment).where(
+            Enrollment.student_id == body.student_id,
+            Enrollment.semester_id == body.semester_id,
+        )
+    )
+    existing = existing_result.scalar_one_or_none()
+    if existing:
+        logger.info(
+            "enrollment_already_exists",
+            extra={
+                "workflow_id": workflow_id,
+                "event_id": str(uuid.uuid4()),
+                "step": "idempotency_check",
+                "outcome": "duplicate",
+                "enrollment_id": existing.id,
+                "student_id": body.student_id,
+            },
+        )
+        raise HTTPException(
+            status_code=409,
+            detail=f"Student {body.student_id} is already enrolled for semester {body.semester_id}",
+        )
+
+    # ── Step 2: Verify fee clearance with Finance service ────────────────────
+    http_client: httpx.AsyncClient = request.app.state.http_client
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(
-                f"{FINANCE_SERVICE_URL}/students/{body.student_id}/fee-clearance",
-                params={"semester_id": body.semester_id},
-            )
+        resp = await http_client.get(
+            f"{FINANCE_SERVICE_URL}/students/{body.student_id}/fee-clearance",
+            params={"semester_id": body.semester_id},
+            headers={"X-Workflow-ID": workflow_id},
+        )
     except httpx.RequestError as exc:
         logger.error(
             "finance_unreachable",
@@ -94,7 +122,7 @@ async def enroll_student(
         },
     )
 
-    # ── Step 2: Create enrollment record ────────────────────────────────────────
+    # ── Step 3: Create enrollment record ─────────────────────────────────────
     enrollment = Enrollment(
         id=str(uuid.uuid4()),
         student_id=body.student_id,
@@ -127,13 +155,17 @@ async def enroll_student(
 @router.get("/enrollments/{student_id}", response_model=List[EnrollmentRecord])
 async def get_enrollments(
     student_id: str,
+    limit: int = 50,
+    offset: int = 0,
     db: AsyncSession = Depends(get_db),
 ) -> List[EnrollmentRecord]:
-    """Return all enrollment records for a student."""
+    """Return enrollment records for a student (paginated)."""
     result = await db.execute(
         select(Enrollment)
         .where(Enrollment.student_id == student_id)
         .order_by(Enrollment.created_at.desc())
+        .limit(limit)
+        .offset(offset)
     )
     records = result.scalars().all()
     return [EnrollmentRecord.model_validate(r) for r in records]

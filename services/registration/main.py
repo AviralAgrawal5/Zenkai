@@ -4,6 +4,7 @@ import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
+import httpx
 from fastapi import FastAPI
 from prometheus_fastapi_instrumentator import Instrumentator
 from pythonjsonlogger import jsonlogger
@@ -33,7 +34,10 @@ async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     logger.info("startup", extra={"step": "startup", "outcome": "tables_ready", "workflow_id": "-", "event_id": "-"})
+    # Shared HTTP client — connection pool reused across all requests
+    app.state.http_client = httpx.AsyncClient(timeout=10.0)
     yield
+    await app.state.http_client.aclose()
     logger.info("shutdown", extra={"step": "shutdown", "outcome": "complete", "workflow_id": "-", "event_id": "-"})
     await engine.dispose()
 

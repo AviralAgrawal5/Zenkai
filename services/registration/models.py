@@ -2,7 +2,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, String
+from sqlalchemy import DateTime, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from database import Base
@@ -16,6 +16,9 @@ class Enrollment(Base):
     """Records semester enrollment outcomes for students."""
 
     __tablename__ = "enrollments"
+    __table_args__ = (
+        UniqueConstraint("student_id", "semester_id", name="uq_enrollment_student_semester"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     student_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)

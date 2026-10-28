@@ -3,7 +3,7 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,11 +19,13 @@ router = APIRouter(prefix="/students", tags=["fee-clearance"])
 @router.get("/{student_id}/fee-clearance", response_model=FeeClearanceResponse)
 async def get_fee_clearance(
     student_id: str,
+    request: Request,
     semester_id: str | None = None,
     db: AsyncSession = Depends(get_db),
 ) -> FeeClearanceResponse:
     """Return the fee clearance status for a student, optionally scoped to a semester."""
-    workflow_id = str(uuid.uuid4())
+    # Propagate workflow_id from upstream caller for cross-service log correlation
+    workflow_id = request.headers.get("X-Workflow-ID", str(uuid.uuid4()))
     logger.info(
         "fee_clearance_lookup",
         extra={

@@ -3,6 +3,15 @@ import axios from 'axios'
 
 const SEMESTER_ID = 'SEM-2026-A'
 
+function formatError(error, defaultMsg) {
+  if (!error) return defaultMsg
+  const detail = error.response?.data?.detail
+  if (typeof detail === 'string') return detail
+  if (typeof detail === 'object' && detail !== null) return JSON.stringify(detail)
+  if (error.message) return error.message
+  return defaultMsg
+}
+
 function Badge({ ok, label }) {
   return (
     <span
@@ -52,7 +61,7 @@ export default function StudentStatus({ studentId }) {
       })
       .then((r) => setClearance(r.data))
       .catch((e) =>
-        setClearanceErr(e.response?.data?.detail ?? 'Could not reach Finance service'),
+        setClearanceErr(formatError(e, 'Could not reach Finance service')),
       )
       .finally(() => setClearanceLoading(false))
 
@@ -63,7 +72,7 @@ export default function StudentStatus({ studentId }) {
       .get(`/api/registration/enrollments/${studentId}`)
       .then((r) => setEnrollments(r.data))
       .catch((e) =>
-        setEnrollErr(e.response?.data?.detail ?? 'Could not reach Registration service'),
+        setEnrollErr(formatError(e, 'Could not reach Registration service')),
       )
       .finally(() => setEnrollLoading(false))
 
@@ -74,7 +83,7 @@ export default function StudentStatus({ studentId }) {
       .get(`/api/learning/access/${studentId}`)
       .then((r) => setAccess(r.data))
       .catch((e) =>
-        setAccessErr(e.response?.data?.detail ?? 'Could not reach Learning service'),
+        setAccessErr(formatError(e, 'Could not reach Learning service')),
       )
       .finally(() => setAccessLoading(false))
   }, [studentId])

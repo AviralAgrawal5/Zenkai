@@ -2,7 +2,7 @@
 import logging
 from typing import List
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -34,8 +34,6 @@ async def get_incident(
     incident_id: str,
     db: AsyncSession = Depends(get_db),
 ) -> IncidentRecord:
-    from fastapi import HTTPException
-
     result = await db.execute(select(Incident).where(Incident.id == incident_id))
     incident = result.scalar_one_or_none()
     if not incident:

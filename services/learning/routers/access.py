@@ -3,7 +3,7 @@ import logging
 import uuid
 from typing import List
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,10 +19,11 @@ router = APIRouter(tags=["access"])
 @router.post("/provision-access", response_model=ProvisionResponse, status_code=201)
 async def provision_access(
     body: ProvisionRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> ProvisionResponse:
     """Provision learning portal access for a set of courses after enrollment."""
-    workflow_id = str(uuid.uuid4())
+    workflow_id = request.headers.get("X-Workflow-ID", str(uuid.uuid4()))
     logger.info(
         "provision_access_started",
         extra={
@@ -36,8 +37,21 @@ async def provision_access(
         },
     )
 
+    # ── Idempotency: skip already-provisioned courses ─────────────────────────
+    existing_result = await db.execute(
+        select(CourseAccess.course_code).where(
+            CourseAccess.student_id == body.student_id,
+            CourseAccess.enrollment_id == body.enrollment_id,
+        )
+    )
+    already_provisioned = {row[0] for row in existing_result.all()}
+
     records: List[CourseAccess] = []
+    skipped: List[str] = []
     for course in body.courses:
+        if course.code in already_provisioned:
+            skipped.append(course.code)
+            continue
         access = CourseAccess(
             id=str(uuid.uuid4()),
             student_id=body.student_id,
@@ -48,6 +62,24 @@ async def provision_access(
         )
         db.add(access)
         records.append(access)
+
+    if skipped:
+        logger.info(
+            "provision_access_skipped_duplicates",
+            extra={
+                "workflow_id": workflow_id,
+                "event_id": str(uuid.uuid4()),
+                "step": "provision_access",
+                "outcome": "partial_skip",
+                "skipped": skipped,
+            },
+        )
+
+    if not records and skipped:
+        raise HTTPException(
+            status_code=409,
+            detail=f"All courses already provisioned for enrollment {body.enrollment_id}",
+        )
 
     await db.flush()
 
@@ -75,13 +107,17 @@ async def provision_access(
 @router.get("/access/{student_id}", response_model=List[CourseAccessRecord])
 async def get_access(
     student_id: str,
+    limit: int = 50,
+    offset: int = 0,
     db: AsyncSession = Depends(get_db),
 ) -> List[CourseAccessRecord]:
-    """Return all active course access records for a student."""
+    """Return all active course access records for a student (paginated)."""
     result = await db.execute(
         select(CourseAccess)
         .where(CourseAccess.student_id == student_id)
         .order_by(CourseAccess.created_at.desc())
+        .limit(limit)
+        .offset(offset)
     )
     records = result.scalars().all()
     return [CourseAccessRecord.model_validate(r) for r in records]

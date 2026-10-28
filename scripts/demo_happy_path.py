@@ -11,6 +11,7 @@ import asyncio
 import json
 import os
 import sys
+import uuid
 
 import httpx
 
@@ -40,6 +41,10 @@ def _print_step(step: str, data: dict | str) -> None:
 
 
 async def run() -> None:
+    workflow_id = f"demo-wf-{uuid.uuid4().hex[:8]}"
+    headers = {"X-Workflow-ID": workflow_id}
+    print(f"Starting registration flow with Workflow ID: {workflow_id}")
+
     async with httpx.AsyncClient(timeout=15.0) as client:
         # ── Step 0: Health checks ─────────────────────────────────────────────
         print("Zenkai Happy-Path Demo — checking service health…")
@@ -60,6 +65,7 @@ async def run() -> None:
         resp = await client.get(
             f"{FINANCE_URL}/students/{STUDENT_ID}/fee-clearance",
             params={"semester_id": SEMESTER_ID},
+            headers=headers,
         )
         resp.raise_for_status()
         clearance = resp.json()
@@ -76,6 +82,7 @@ async def run() -> None:
                 "semester_id": SEMESTER_ID,
                 "adviser_approval_id": ADVISER_APPROVAL_ID,
             },
+            headers=headers,
         )
         resp.raise_for_status()
         enrollment = resp.json()
@@ -91,6 +98,7 @@ async def run() -> None:
                 "enrollment_id": enrollment_id,
                 "courses": COURSES,
             },
+            headers=headers,
         )
         resp.raise_for_status()
         provision = resp.json()
