@@ -1,0 +1,51 @@
+// Grafana Alloy configuration — collect container logs and forward to Loki
+// Reference: https://grafana.com/docs/alloy/latest/
+
+logging {
+  level  = "info"
+  format = "logfmt"
+}
+
+// ── Docker container log discovery ───────────────────────────────────────────
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+}
+
+// ── Relabel: keep only zenkai service containers ─────────────────────────────
+discovery.relabel "zenkai_containers" {
+  targets = discovery.docker.containers.targets
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(finance|registration|learning|zenkai-core).*"
+    action        = "keep"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    target_label  = "service"
+    regex         = "/([^/]+)"
+    replacement   = "$1"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "compose_service"
+  }
+}
+
+// ── Loki log scrape ───────────────────────────────────────────────────────────
+loki.source.docker "zenkai_logs" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.relabel.zenkai_containers.output
+  forward_to = [loki.write.default.receiver]
+
+  relabel_rules = discovery.relabel.zenkai_containers.rules
+}
+
+// ── Loki write ────────────────────────────────────────────────────────────────
+loki.write "default" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

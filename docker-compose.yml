@@ -1,0 +1,181 @@
+services:
+  # ── Finance service ──────────────────────────────────────────────────────────
+  finance:
+    build:
+      context: services/finance
+      dockerfile: Dockerfile
+    environment:
+      - DATABASE_URL=${FINANCE_DATABASE_URL:-${DATABASE_URL}}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+    ports:
+      - "8001:8001"
+    networks:
+      - zenkai-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Registration service ─────────────────────────────────────────────────────
+  registration:
+    build:
+      context: services/registration
+      dockerfile: Dockerfile
+    environment:
+      - DATABASE_URL=${REGISTRATION_DATABASE_URL:-${DATABASE_URL}}
+      - FINANCE_SERVICE_URL=${FINANCE_SERVICE_URL:-http://finance:8001}
+      - LEARNING_SERVICE_URL=${LEARNING_SERVICE_URL:-http://learning:8003}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+    ports:
+      - "8002:8002"
+    depends_on:
+      finance:
+        condition: service_healthy
+    networks:
+      - zenkai-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Learning portal service ──────────────────────────────────────────────────
+  learning:
+    build:
+      context: services/learning
+      dockerfile: Dockerfile
+    environment:
+      - DATABASE_URL=${LEARNING_DATABASE_URL:-${DATABASE_URL}}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+    ports:
+      - "8003:8003"
+    networks:
+      - zenkai-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Zenkai core ──────────────────────────────────────────────────────────────
+  zenkai-core:
+    build:
+      context: services/zenkai-core
+      dockerfile: Dockerfile
+    environment:
+      - DATABASE_URL=${ZENKAI_DATABASE_URL:-${DATABASE_URL}}
+      - FINANCE_SERVICE_URL=${FINANCE_SERVICE_URL:-http://finance:8001}
+      - REGISTRATION_SERVICE_URL=${REGISTRATION_SERVICE_URL:-http://registration:8002}
+      - LEARNING_SERVICE_URL=${LEARNING_SERVICE_URL:-http://learning:8003}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - OPENROUTER_BASE_URL=${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
+      - OPENROUTER_MODEL=${OPENROUTER_MODEL:-openai/gpt-4o-mini}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+    ports:
+      - "8004:8004"
+    depends_on:
+      finance:
+        condition: service_healthy
+      registration:
+        condition: service_healthy
+      learning:
+        condition: service_healthy
+    networks:
+      - zenkai-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8004/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Frontend ─────────────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: frontend
+      dockerfile: Dockerfile
+    ports:
+      - "5173:80"
+    depends_on:
+      - zenkai-core
+    networks:
+      - zenkai-net
+    restart: unless-stopped
+
+  # ── Prometheus ───────────────────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.52.0
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-lifecycle
+    ports:
+      - "9090:9090"
+    networks:
+      - zenkai-net
+    restart: unless-stopped
+
+  # ── Loki ─────────────────────────────────────────────────────────────────────
+  loki:
+    image: grafana/loki:3.1.0
+    ports:
+      - "3100:3100"
+    volumes:
+      - loki-data:/loki
+    networks:
+      - zenkai-net
+    restart: unless-stopped
+    command: -config.file=/etc/loki/local-config.yaml
+
+  # ── Grafana Alloy ────────────────────────────────────────────────────────────
+  alloy:
+    image: grafana/alloy:v1.2.0
+    volumes:
+      - ./observability/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    command: run /etc/alloy/config.alloy
+    networks:
+      - zenkai-net
+    depends_on:
+      - loki
+    restart: unless-stopped
+
+  # ── Grafana ──────────────────────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:11.0.0
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=zenkai
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+    networks:
+      - zenkai-net
+    depends_on:
+      - prometheus
+      - loki
+    restart: unless-stopped
+
+volumes:
+  prometheus-data:
+  loki-data:
+  grafana-data:
+
+networks:
+  zenkai-net:
+    driver: bridge

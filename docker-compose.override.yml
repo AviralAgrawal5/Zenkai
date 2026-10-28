@@ -1,0 +1,31 @@
+# docker-compose.override.yml — Development overrides
+# Applied automatically with `docker compose up` or `make dev`
+
+services:
+  finance:
+    volumes:
+      - ./services/finance:/app:cached
+    command: uvicorn main:app --host 0.0.0.0 --port 8001 --reload
+    environment:
+      - ENVIRONMENT=development
+
+  registration:
+    volumes:
+      - ./services/registration:/app:cached
+    command: uvicorn main:app --host 0.0.0.0 --port 8002 --reload
+    environment:
+      - ENVIRONMENT=development
+
+  learning:
+    volumes:
+      - ./services/learning:/app:cached
+    command: uvicorn main:app --host 0.0.0.0 --port 8003 --reload
+    environment:
+      - ENVIRONMENT=development
+
+  zenkai-core:
+    volumes:
+      - ./services/zenkai-core:/app:cached
+    command: uvicorn main:app --host 0.0.0.0 --port 8004 --reload
+    environment:
+      - ENVIRONMENT=development

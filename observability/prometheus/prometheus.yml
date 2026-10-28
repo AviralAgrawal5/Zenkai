@@ -1,0 +1,28 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: finance
+    static_configs:
+      - targets: ["finance:8001"]
+    metrics_path: /metrics
+
+  - job_name: registration
+    static_configs:
+      - targets: ["registration:8002"]
+    metrics_path: /metrics
+
+  - job_name: learning
+    static_configs:
+      - targets: ["learning:8003"]
+    metrics_path: /metrics
+
+  - job_name: zenkai-core
+    static_configs:
+      - targets: ["zenkai-core:8004"]
+    metrics_path: /metrics
