@@ -31,9 +31,9 @@ COURSES = [
 
 
 def _print_step(step: str, data: dict | str) -> None:
-    print(f"\n{'─' * 60}")
+    print(f"\n{'-' * 60}")
     print(f"  {step}")
-    print(f"{'─' * 60}")
+    print(f"{'-' * 60}")
     if isinstance(data, dict):
         print(json.dumps(data, indent=2, default=str))
     else:
@@ -47,7 +47,7 @@ async def run() -> None:
 
     async with httpx.AsyncClient(timeout=15.0) as client:
         # ── Step 0: Health checks ─────────────────────────────────────────────
-        print("Zenkai Happy-Path Demo — checking service health…")
+        print("Zenkai Happy-Path Demo -- checking service health...")
         for name, url in [
             ("finance", FINANCE_URL),
             ("registration", REGISTRATION_URL),
@@ -84,11 +84,19 @@ async def run() -> None:
             },
             headers=headers,
         )
-        resp.raise_for_status()
-        enrollment = resp.json()
-        _print_step("2. Semester Enrollment (Registration)", enrollment)
-
-        enrollment_id = enrollment["enrollment_id"]
+        if resp.status_code == 409:
+            print("[INFO] Student already enrolled (idempotency verified). Fetching existing enrollment...")
+            get_resp = await client.get(f"{REGISTRATION_URL}/enrollments/{STUDENT_ID}")
+            get_resp.raise_for_status()
+            records = get_resp.json()
+            enrollment = records[0]
+            enrollment_id = enrollment["id"]
+            _print_step("2. Existing Enrollment Reused", enrollment)
+        else:
+            resp.raise_for_status()
+            enrollment = resp.json()
+            _print_step("2. Semester Enrollment (Registration)", enrollment)
+            enrollment_id = enrollment["enrollment_id"]
 
         # ── Step 3: Provision course access ────────────────────────────────────
         resp = await client.post(
@@ -100,9 +108,13 @@ async def run() -> None:
             },
             headers=headers,
         )
-        resp.raise_for_status()
-        provision = resp.json()
-        _print_step("3. Course Access (Learning Portal)", provision)
+        if resp.status_code == 409:
+            print("[INFO] Courses already provisioned (idempotency verified).")
+            _print_step("3. Course Access (Already active)", {"status": "already_provisioned"})
+        else:
+            resp.raise_for_status()
+            provision = resp.json()
+            _print_step("3. Course Access (Learning Portal)", provision)
 
         # ── Step 4: Verify enrollments ─────────────────────────────────────────
         resp = await client.get(f"{REGISTRATION_URL}/enrollments/{STUDENT_ID}")
@@ -114,13 +126,13 @@ async def run() -> None:
         resp.raise_for_status()
         _print_step("5. Course access records", resp.json())
 
-        print(f"\n{'═' * 60}")
-        print("  ✓ Happy-path registration complete!")
+        print(f"\n{'=' * 60}")
+        print("  [OK] Happy-path registration complete!")
         print(f"    Student   : {STUDENT_ID}")
         print(f"    Semester  : {SEMESTER_ID}")
         print(f"    Enrollment: {enrollment_id}")
         print(f"    Courses   : {[c['code'] for c in COURSES]}")
-        print(f"{'═' * 60}\n")
+        print(f"{'=' * 60}\n")
 
 
 if __name__ == "__main__":

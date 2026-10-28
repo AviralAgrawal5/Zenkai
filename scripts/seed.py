@@ -1,6 +1,7 @@
 """scripts/seed.py — Insert seed data into the Finance service database.
 
 Inserts a fictional student STU001 with fee cleared for semester SEM-2026-A.
+Works with both Neon PostgreSQL and local SQLite.
 Run:  python scripts/seed.py
 """
 import asyncio
@@ -8,16 +9,14 @@ import os
 import sys
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 
 # Adjust path so we can import the finance service models directly
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "services", "finance"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "services" / "finance"))
 
-import asyncpg  # noqa: E402  (only asyncpg needed for direct insert)
-
-DATABASE_URL = os.environ.get(
-    "FINANCE_DATABASE_URL",
-    os.environ.get("DATABASE_URL", ""),
-)
+from sqlalchemy import select
+from database import Base, engine, AsyncSessionLocal
+from models import FeeClearance
 
 SEED_STUDENT_ID = "STU001"
 SEED_SEMESTER_ID = "SEM-2026-A"
@@ -26,57 +25,34 @@ SEED_ADVISER_APPROVAL_ID = "ADV-001-2026"
 
 
 async def seed() -> None:
-    if not DATABASE_URL:
-        print("ERROR: Set DATABASE_URL or FINANCE_DATABASE_URL before running seed.py")
-        sys.exit(1)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
 
-    # asyncpg needs a plain postgresql:// URL (not +asyncpg)
-    url = DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://")
-
-    conn = await asyncpg.connect(url)
-    try:
-        await conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS fee_clearances (
-                id          TEXT PRIMARY KEY,
-                student_id  TEXT NOT NULL,
-                semester_id TEXT NOT NULL,
-                cleared     BOOLEAN NOT NULL DEFAULT FALSE,
-                amount_paid FLOAT NOT NULL DEFAULT 0.0,
-                created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-                updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(FeeClearance).where(
+                FeeClearance.student_id == SEED_STUDENT_ID,
+                FeeClearance.semester_id == SEED_SEMESTER_ID,
             )
-            """
         )
-
-        existing = await conn.fetchrow(
-            "SELECT id FROM fee_clearances WHERE student_id = $1 AND semester_id = $2",
-            SEED_STUDENT_ID,
-            SEED_SEMESTER_ID,
-        )
+        existing = result.scalar_one_or_none()
 
         if existing:
-            print(f"Seed record already exists (id={existing['id']}). Skipping.")
+            print(f"Seed record already exists (id={existing.id}). Skipping.")
             return
 
-        record_id = str(uuid.uuid4())
-        now = datetime.now(timezone.utc)
-        await conn.execute(
-            """
-            INSERT INTO fee_clearances (id, student_id, semester_id, cleared, amount_paid, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
-            """,
-            record_id,
-            SEED_STUDENT_ID,
-            SEED_SEMESTER_ID,
-            True,
-            SEED_AMOUNT_PAID,
-            now,
-            now,
+        record = FeeClearance(
+            id=str(uuid.uuid4()),
+            student_id=SEED_STUDENT_ID,
+            semester_id=SEED_SEMESTER_ID,
+            cleared=True,
+            amount_paid=SEED_AMOUNT_PAID,
         )
-        print(f"✓ Seeded fee clearance for {SEED_STUDENT_ID} / {SEED_SEMESTER_ID} (id={record_id})")
-    finally:
-        await conn.close()
+        session.add(record)
+        await session.commit()
+        print(f"[OK] Seeded fee clearance for {SEED_STUDENT_ID} / {SEED_SEMESTER_ID} (id={record.id})")
+
+    await engine.dispose()
 
 
 if __name__ == "__main__":

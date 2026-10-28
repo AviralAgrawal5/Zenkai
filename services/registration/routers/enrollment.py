@@ -17,7 +17,7 @@ logger = logging.getLogger("registration")
 
 router = APIRouter(tags=["enrollment"])
 
-FINANCE_SERVICE_URL = os.environ.get("FINANCE_SERVICE_URL", "http://finance:8001")
+FINANCE_SERVICE_URL = os.environ.get("FINANCE_SERVICE_URL", "http://localhost:8001")
 
 
 @router.post("/enroll", response_model=EnrollResponse, status_code=201)
